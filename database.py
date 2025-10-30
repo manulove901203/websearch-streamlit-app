@@ -1,196 +1,54 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from datetime import datetime
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# 1. DB URL을 환경변수에서 찾되, 없으면 sqlite로 fallback
+DEFAULT_SQLITE_URL = "sqlite:///app.db"
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_SQLITE_URL)
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 2. 엔진/세션 팩토리 생성
+engine = create_engine(DATABASE_URL, echo=False)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
 Base = declarative_base()
 
-class Bookmark(Base):
-    __tablename__ = "bookmarks"
-    
+# 3. 예시 테이블 (필요 시 수정)
+#    - 앱에서 로그/검색기록/요청기록 등을 남길 용도라고 가정
+class SearchLog(Base):
+    __tablename__ = "search_logs"
+
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True, default="default_user")
-    item_type = Column(String)
-    item_id = Column(String)
-    title = Column(String)
-    category = Column(String)
+    query = Column(String(500))
+    summary = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-class LearningProgress(Base):
-    __tablename__ = "learning_progress"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True, default="default_user")
-    page_name = Column(String)
-    completed = Column(Boolean, default=False)
-    visited_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class QuizResult(Base):
-    __tablename__ = "quiz_results"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True, default="default_user")
-    quiz_id = Column(String)
-    score = Column(Integer)
-    total_questions = Column(Integer)
-    answers = Column(Text)
-    completed_at = Column(DateTime, default=datetime.utcnow)
-
+# 4. 테이블이 없으면 생성
 def init_db():
     Base.metadata.create_all(bind=engine)
 
-def get_db():
-    db = SessionLocal()
-    try:
-        return db
-    finally:
-        pass
+# 5. 편의 함수들
+def get_session():
+    return SessionLocal()
 
-def add_bookmark(item_type, item_id, title, category, user_id="default_user"):
-    db = SessionLocal()
+def log_search(query: str, summary: str):
+    session = get_session()
     try:
-        existing = db.query(Bookmark).filter(
-            Bookmark.user_id == user_id,
-            Bookmark.item_id == item_id
-        ).first()
-        
-        if existing:
-            return False
-        
-        bookmark = Bookmark(
-            user_id=user_id,
-            item_type=item_type,
-            item_id=item_id,
-            title=title,
-            category=category
+        row = SearchLog(query=query, summary=summary)
+        session.add(row)
+        session.commit()
+    finally:
+        session.close()
+
+def get_recent_logs(limit: int = 20):
+    session = get_session()
+    try:
+        rows = (
+            session.query(SearchLog)
+            .order_by(SearchLog.created_at.desc())
+            .limit(limit)
+            .all()
         )
-        db.add(bookmark)
-        db.commit()
-        return True
-    except Exception as e:
-        db.rollback()
-        print(f"Error adding bookmark: {e}")
-        return False
+        return rows
     finally:
-        db.close()
-
-def remove_bookmark(item_id, user_id="default_user"):
-    db = SessionLocal()
-    try:
-        bookmark = db.query(Bookmark).filter(
-            Bookmark.user_id == user_id,
-            Bookmark.item_id == item_id
-        ).first()
-        
-        if bookmark:
-            db.delete(bookmark)
-            db.commit()
-            return True
-        return False
-    except Exception as e:
-        db.rollback()
-        print(f"Error removing bookmark: {e}")
-        return False
-    finally:
-        db.close()
-
-def get_bookmarks(user_id="default_user"):
-    db = SessionLocal()
-    try:
-        bookmarks = db.query(Bookmark).filter(Bookmark.user_id == user_id).order_by(Bookmark.created_at.desc()).all()
-        return bookmarks
-    except Exception as e:
-        print(f"Error getting bookmarks: {e}")
-        return []
-    finally:
-        db.close()
-
-def is_bookmarked(item_id, user_id="default_user"):
-    db = SessionLocal()
-    try:
-        bookmark = db.query(Bookmark).filter(
-            Bookmark.user_id == user_id,
-            Bookmark.item_id == item_id
-        ).first()
-        return bookmark is not None
-    except Exception as e:
-        print(f"Error checking bookmark: {e}")
-        return False
-    finally:
-        db.close()
-
-def update_learning_progress(page_name, completed=False, user_id="default_user"):
-    db = SessionLocal()
-    try:
-        progress = db.query(LearningProgress).filter(
-            LearningProgress.user_id == user_id,
-            LearningProgress.page_name == page_name
-        ).first()
-        
-        if progress:
-            progress.completed = completed
-            progress.updated_at = datetime.utcnow()
-        else:
-            progress = LearningProgress(
-                user_id=user_id,
-                page_name=page_name,
-                completed=completed
-            )
-            db.add(progress)
-        
-        db.commit()
-        return True
-    except Exception as e:
-        db.rollback()
-        print(f"Error updating learning progress: {e}")
-        return False
-    finally:
-        db.close()
-
-def get_learning_progress(user_id="default_user"):
-    db = SessionLocal()
-    try:
-        progress = db.query(LearningProgress).filter(LearningProgress.user_id == user_id).all()
-        return progress
-    except Exception as e:
-        print(f"Error getting learning progress: {e}")
-        return []
-    finally:
-        db.close()
-
-def save_quiz_result(quiz_id, score, total_questions, answers, user_id="default_user"):
-    db = SessionLocal()
-    try:
-        result = QuizResult(
-            user_id=user_id,
-            quiz_id=quiz_id,
-            score=score,
-            total_questions=total_questions,
-            answers=str(answers)
-        )
-        db.add(result)
-        db.commit()
-        return True
-    except Exception as e:
-        db.rollback()
-        print(f"Error saving quiz result: {e}")
-        return False
-    finally:
-        db.close()
-
-def get_quiz_results(user_id="default_user"):
-    db = SessionLocal()
-    try:
-        results = db.query(QuizResult).filter(QuizResult.user_id == user_id).order_by(QuizResult.completed_at.desc()).all()
-        return results
-    except Exception as e:
-        print(f"Error getting quiz results: {e}")
-        return []
-    finally:
-        db.close()
+        session.close()
